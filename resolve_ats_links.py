@@ -32,10 +32,13 @@ from bs4 import BeautifulSoup
 
 from audit_external_links import AGGREGATOR_DOMAINS
 from linkedin_ai_job_filter import (
+    DIRECTOR_VP_RE,
     canonicalize_url,
     is_blacklisted_company,
     is_external_url,
     is_software_or_ai_domain,
+    non_engineering_reason,
+    url_slug_text,
 )
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
@@ -89,7 +92,7 @@ WEAK_DESC = STRONG_DESC + [
     r"\bon[- ]?site\s+(?:role|position|only)\b",
 ]
 SENIOR_RE = re.compile(r"\b(senior|sr|lead|staff|principal)\b", re.I)
-DISALLOWED_TITLE_RE = re.compile(r"\b(director|vp|vice\s*president|vice)\b", re.I)
+DISALLOWED_TITLE_RE = DIRECTOR_VP_RE
 JUNIOR_RE = re.compile(r"\b(junior|jr\.?|intern|internship|entry[- ]level|new grad|associate|co-?op)\b", re.I)
 
 COMPANY_ALIASES = {
@@ -1184,8 +1187,15 @@ def verify_external_job(row, match):
     if blocked:
         reasons.append(block_reason)
 
-    if DISALLOWED_TITLE_RE.search(row["job_title"]) or DISALLOWED_TITLE_RE.search(ext_title):
+    # The company's URL slug often carries the real title (Workday: ".../job/Remote/VP--Site-Reliability-Engineer_JR1"),
+    # even when LinkedIn shows a softened one ("Lead Site Reliability Engineer").
+    if (DISALLOWED_TITLE_RE.search(row["job_title"]) or DISALLOWED_TITLE_RE.search(ext_title)
+            or DISALLOWED_TITLE_RE.search(url_slug_text(url))):
         reasons.append("title indicates Director / VP / Vice role")
+
+    non_eng = non_engineering_reason(row["job_title"], ext_title)
+    if non_eng:
+        reasons.append(non_eng)
 
     if JUNIOR_RE.search(ext_title) or JUNIOR_RE.search(row["job_title"]):
         reasons.append("title indicates junior / entry-level / associate role (< 5 years experience)")

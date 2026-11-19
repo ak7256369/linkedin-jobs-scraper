@@ -72,7 +72,7 @@ Windows shortcuts: `run_scraper.bat`, `run_filter.bat`, `open_search.bat`.
 ## Filters
 
 US only; explicitly fully remote (hybrid/on-site rejected); Senior / Lead / Staff / Principal; no Director/VP;
-AI or software domain; posted in the last 24 hours; real non-LinkedIn HTTPS apply link; not an aggregator; company
+AI or software domain; engineering roles only (no product/program managers, designers, recruiters, sales or specialist roles); Director/VP also checked in the company URL slug; posted in the last 24 hours; real non-LinkedIn HTTPS apply link; not an aggregator; company
 not blacklisted (ClickUp, Jobright.ai, Alignerr, Ladders, Rex.zone, Jobtogether/Jobgether, Dayforce, Micro1,
 Data Annotation, Turing, ChatGPT Jobs, Synthesia).
 

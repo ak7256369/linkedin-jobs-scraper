@@ -17,6 +17,8 @@ from linkedin_ai_job_filter import (
     is_us_country,
     is_remote_workplace,
     parse_minutes,
+    DIRECTOR_VP_RE,
+    non_engineering_reason,
 )
 
 socket.setdefaulttimeout(15)
@@ -214,7 +216,11 @@ def scrape_jobs_for_keyword(keyword: str, geoid: str = "103644278", f_tpr: str =
                 continue
 
             # 3. Skip Director / VP / Vice roles
-            if re.search(r"\b(director|vp|vice\s*president|vice)\b", title, re.IGNORECASE):
+            if DIRECTOR_VP_RE.search(title):
+                continue
+
+            # 3b. Skip non-engineering roles (product/program managers, designers, recruiters, sales...)
+            if non_engineering_reason(title):
                 continue
 
             # 4. Skip non-US location if explicitly tagged outside US

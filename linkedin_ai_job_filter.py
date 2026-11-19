@@ -531,6 +531,55 @@ def is_software_or_ai_domain(value: str) -> bool:
     return is_ai_domain(value) or is_software_domain(value)
 
 
+# Roles that mention AI/ML/platform but are not engineering jobs (product, program, design,
+# recruiting, sales/GTM, specialist/enablement). Checked on the LinkedIn and the company title.
+# Hard: the role itself is non-engineering, whatever else the title says.
+NON_ENGINEERING_TITLE_RE = re.compile(
+    r"\b("
+    r"product\s+(?:manager|owner|marketing)|"
+    r"(?:technical\s+)?program\s+(?:manager|lead)|tpm|project\s+manager|"
+    r"designer|"
+    r"recruiter|recruiting|sourcer|talent\s+(?:acquisition|partner)|people\s+partner|"
+    r"sales\s+engineer|account\s+(?:executive|manager)|business\s+development|"
+    r"counsel|attorney|paralegal|accountant"
+    r")\b",
+    re.IGNORECASE,
+)
+# Soft: non-engineering unless the title also names an engineering role
+# ("AI Enablement Specialist" is out, "Senior AI Software Engineer, AI Enablement" stays).
+SOFT_NON_ENGINEERING_RE = re.compile(
+    r"\b(specialist|enablement|client\s+services|customer\s+success|marketing|sales|"
+    r"evangelist|writer|editor)\b",
+    re.IGNORECASE,
+)
+ENGINEERING_NOUN_RE = re.compile(
+    r"\b(engineer(?:ing)?|developer|programmer|scientist|architect|sre|devops|swe|"
+    r"member\s+of\s+technical\s+staff|researcher)\b",
+    re.IGNORECASE,
+)
+
+# Director / VP / Vice in a title or in a URL slug ("Vice-President--Cloud-Platform-Engineer").
+DIRECTOR_VP_RE = re.compile(r"\b(director|vp|svp|evp|avp|vice\s*president|vice)\b", re.IGNORECASE)
+
+
+def non_engineering_reason(*titles: str) -> str:
+    """Return a rejection reason if any title is a non-engineering role, else ''."""
+    for t in titles:
+        t = t or ""
+        m = NON_ENGINEERING_TITLE_RE.search(t)
+        if not m and not ENGINEERING_NOUN_RE.search(t):
+            m = SOFT_NON_ENGINEERING_RE.search(t)
+        if m:
+            return f"non-engineering role ('{m.group(0)}' in title)"
+    return ""
+
+
+def url_slug_text(url: str) -> str:
+    """Readable words from a URL path, e.g. '/job/Remote/VP--Site-Reliability_JR1' -> 'job Remote VP Site Reliability JR1'."""
+    path = urllib.parse.unquote(urllib.parse.urlparse(url or "").path)
+    return re.sub(r"[-_/+.]+", " ", path)
+
+
 def is_us_country(value: str) -> bool:
     c = normalize(value)
     if not c:
@@ -676,8 +725,12 @@ def check_record(row: Dict[str, str], allow_linkedin_apply: bool = False) -> Lis
         reasons.append(block_reason)
 
     # Exclude Director / VP / Vice roles
-    if re.search(r"\b(director|vp|vice\s*president|vice)\b", title, re.IGNORECASE):
+    if DIRECTOR_VP_RE.search(title) or DIRECTOR_VP_RE.search(url_slug_text(row.get("external_apply_url", ""))):
         reasons.append("job title indicates Director / VP / Vice role (excluded by user preference)")
+
+    non_eng = non_engineering_reason(row.get("job_title", ""))
+    if non_eng:
+        reasons.append(non_eng)
 
     seniority = normalize(row.get("seniority"))
     title = normalize(row.get("job_title"))
