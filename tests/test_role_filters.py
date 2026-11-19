@@ -10,11 +10,9 @@ from linkedin_ai_job_filter import DIRECTOR_VP_RE, check_record, non_engineering
 class NonEngineeringTests(unittest.TestCase):
     def test_non_engineering_titles_rejected(self):
         for title in [
-            "Staff Product Manager, AI Developer Platform",
-            "Lead Product Manager, Agentic AI",
             "Senior Product Designer, Developer Platform",
-            "Principal Technical Program Manager - Computer Vision",
             "Senior Talent Acquisition Partner - Robotics & ML",
+            "Senior Account Manager, AI Solutions",
             "AI Specialist & Executive Program Lead",
             "Senior AI & Transformation Enablement Specialist",
             "Principal Product Specialist - AI Security",
@@ -36,6 +34,19 @@ class NonEngineeringTests(unittest.TestCase):
             "Senior Product Engineer",
         ]:
             self.assertEqual(non_engineering_reason(title), "", title)
+
+    def test_ai_team_manager_roles_kept(self):
+        for title in [
+            "Engineering Manager, AI Platform",
+            "Manager, Machine Learning Engineering",
+            "Staff Product Manager, AI Developer Platform",
+            "Lead Product Manager, Agentic AI",
+            "Principal Technical Program Manager - Computer Vision",
+            "Senior Project Manager, AI Infrastructure",
+        ]:
+            self.assertEqual(non_engineering_reason(title), "", title)
+        import resolve_ats_links
+        self.assertTrue(resolve_ats_links.SENIOR_RE.search("Engineering Manager, AI Platform"))
 
 
 class DirectorVpSlugTests(unittest.TestCase):

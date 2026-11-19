@@ -534,10 +534,11 @@ def is_software_or_ai_domain(value: str) -> bool:
 # Roles that mention AI/ML/platform but are not engineering jobs (product, program, design,
 # recruiting, sales/GTM, specialist/enablement). Checked on the LinkedIn and the company title.
 # Hard: the role itself is non-engineering, whatever else the title says.
+# Manager roles for AI / engineering teams (engineering, product, program, project managers)
+# are deliberately kept; the AI/Software domain check still applies to them.
 NON_ENGINEERING_TITLE_RE = re.compile(
     r"\b("
-    r"product\s+(?:manager|owner|marketing)|"
-    r"(?:technical\s+)?program\s+(?:manager|lead)|tpm|project\s+manager|"
+    r"product\s+marketing|"
     r"designer|"
     r"recruiter|recruiting|sourcer|talent\s+(?:acquisition|partner)|people\s+partner|"
     r"sales\s+engineer|account\s+(?:executive|manager)|business\s+development|"

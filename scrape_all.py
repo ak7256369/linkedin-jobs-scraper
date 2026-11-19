@@ -232,7 +232,7 @@ def scrape_jobs_for_keyword(keyword: str, geoid: str = "103644278", f_tpr: str =
                 continue
 
             # 5. Must be Senior level
-            has_sr = bool(re.search(r"\b(senior|sr|lead|staff|principal|architect|head)\b", title, re.IGNORECASE))
+            has_sr = bool(re.search(r"\b(senior|sr|lead|staff|principal|architect|head|manager)\b", title, re.IGNORECASE))
             if not has_sr:
                 continue
 

@@ -91,7 +91,8 @@ WEAK_DESC = STRONG_DESC + [
     r"\bin[- ]office\s+(?:role|position|requirement)",
     r"\bon[- ]?site\s+(?:role|position|only)\b",
 ]
-SENIOR_RE = re.compile(r"\b(senior|sr|lead|staff|principal)\b", re.I)
+# Managers / heads of AI or engineering teams count as senior (5+ years) roles.
+SENIOR_RE = re.compile(r"\b(senior|sr|lead|staff|principal|manager|head)\b", re.I)
 DISALLOWED_TITLE_RE = DIRECTOR_VP_RE
 JUNIOR_RE = re.compile(r"\b(junior|jr\.?|intern|internship|entry[- ]level|new grad|associate|co-?op)\b", re.I)
 
