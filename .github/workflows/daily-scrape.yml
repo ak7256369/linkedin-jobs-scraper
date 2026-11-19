@@ -39,7 +39,7 @@ jobs:
   scrape:
     needs: test
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180   # slowest shard took ~70 min under heavy throttling
     strategy:
       fail-fast: false
       matrix:
