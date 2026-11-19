@@ -18,34 +18,81 @@ concurrency:
   group: daily-scrape
   cancel-in-progress: false
 
+env:
+  SHARDS: 4
+
 jobs:
-  scrape:
+  test:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
+      - run: pip install -r requirements.txt
       - name: Unit tests
         run: python -m unittest discover tests
 
-      - name: Run pipeline (scrape -> filter -> resolve -> POST)
+  # LinkedIn rate-limits (HTTP 429) per IP. Each matrix job runs on its own runner VM with its
+  # own public IP, so splitting the keywords over 4 shards cuts the requests per IP by ~4x.
+  scrape:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Scrape shard ${{ matrix.shard }}
+        run: |
+          # Stagger shard start times a little so they do not all hit LinkedIn in the same second.
+          sleep $(( ${{ matrix.shard }} * 15 ))
+          python -u daily_pipeline.py --scrape-only shards --shard ${{ matrix.shard }} --shards $SHARDS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shard-${{ matrix.shard }}
+          path: shards/
+          if-no-files-found: warn
+          retention-days: 7
+
+  finish:
+    needs: scrape
+    if: ${{ !cancelled() && needs.scrape.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: shard-*
+          path: shards
+          merge-multiple: true
+
+      - name: Merge shards -> filter -> resolve -> POST
         env:
           TRUESOFTS_INGEST_URL: ${{ secrets.TRUESOFTS_INGEST_URL }}
           TRUESOFTS_INGEST_TOKEN: ${{ secrets.TRUESOFTS_INGEST_TOKEN }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
         run: |
           if [ "$DRY_RUN" = "true" ]; then
-            python -u daily_pipeline.py --dry-run
+            python -u daily_pipeline.py --merge shards --dry-run
           else
-            python -u daily_pipeline.py
+            python -u daily_pipeline.py --merge shards
           fi
 
       - name: Upload CSVs
@@ -55,6 +102,7 @@ jobs:
           name: linkedin-jobs-${{ github.run_id }}
           path: |
             *.csv
+            shards/*.json
             external_apply_urls.json
             data/last_run.json
           if-no-files-found: warn

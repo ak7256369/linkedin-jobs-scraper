@@ -3,7 +3,9 @@ import os
 import re
 import csv
 import time
+import random
 import socket
+import urllib.error
 import urllib.request
 import urllib.parse
 from bs4 import BeautifulSoup
@@ -39,8 +41,86 @@ ROLE_DOMAIN_RULES = [
     ("Platform / Systems Engineering", r"\b(platform|infrastructure|systems|cloud)\b"),
 ]
 
-# Number of LinkedIn pages that could not be fetched after retries (blocking / rate limits).
+# Number of LinkedIn pages that could still not be fetched after every retry and resume pass.
 FETCH_FAILURES = 0
+# Keywords whose results are incomplete after all passes: [{"keyword": ..., "offset": ...}]
+INCOMPLETE = []
+# Total HTTP 429 responses seen (for run summaries).
+THROTTLE_HITS = 0
+
+# --- Rate-limit handling -------------------------------------------------------------
+# LinkedIn answers bursts from one IP with HTTP 429 for roughly a minute or more. Short
+# retries (2-8 s) just burn attempts inside that window, so on 429 we honour Retry-After
+# or back off exponentially (20 s -> 40 s -> 80 s -> 160 s, capped, with jitter) and slow
+# the normal page pace for the rest of the run (it then recovers slowly on success).
+# A page that still fails is not dropped: its keyword is resumed from that offset in a
+# later pass after a cool-down.
+BACKOFF_BASE = float(os.environ.get("SCRAPE_BACKOFF_BASE", "20"))
+BACKOFF_CAP = float(os.environ.get("SCRAPE_BACKOFF_CAP", "180"))
+MAX_429_ATTEMPTS = int(os.environ.get("SCRAPE_MAX_429_ATTEMPTS", "5"))
+MAX_ERROR_ATTEMPTS = 3
+PACE_MIN = float(os.environ.get("SCRAPE_PACE_MIN", "1.5"))
+PACE_MAX = 12.0
+RESUME_PASSES = int(os.environ.get("SCRAPE_RESUME_PASSES", "3"))
+RESUME_COOLDOWN = float(os.environ.get("SCRAPE_RESUME_COOLDOWN", "120"))
+_pace = PACE_MIN
+
+
+def _sleep(seconds: float) -> None:
+    time.sleep(max(0.0, seconds))
+
+
+def _retry_after_seconds(exc) -> float | None:
+    try:
+        value = exc.headers.get("Retry-After") if getattr(exc, "headers", None) else None
+        return float(value) if value else None
+    except (TypeError, ValueError):
+        return None
+
+
+def fetch_page(url: str, ua: str):
+    """Fetch one LinkedIn page. Returns HTML (possibly '' for an empty page) or None on failure."""
+    global _pace, THROTTLE_HITS
+    req = urllib.request.Request(url, headers={
+        "User-Agent": ua,
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    })
+    throttled = errors = 0
+    while True:
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                html = resp.read().decode("utf-8", "replace")
+            _pace = max(PACE_MIN, _pace * 0.9)  # recover slowly after throttling
+            return html
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429 or exc.code == 999 or exc.code >= 500:
+                if exc.code == 429:
+                    THROTTLE_HITS += 1
+                throttled += 1
+                _pace = min(PACE_MAX, _pace * 2)
+                if throttled >= MAX_429_ATTEMPTS:
+                    print(f"  HTTP {exc.code} x{throttled} - giving up on this page for now.", flush=True)
+                    return None
+                wait = _retry_after_seconds(exc) or min(BACKOFF_CAP, BACKOFF_BASE * 2 ** (throttled - 1))
+                wait *= random.uniform(0.85, 1.25)
+                print(f"  HTTP {exc.code} (attempt {throttled}/{MAX_429_ATTEMPTS}); backing off {wait:.0f}s, "
+                      f"page pace now {_pace:.1f}s", flush=True)
+                _sleep(wait)
+                continue
+            if exc.code in (400, 404):
+                return ""  # past the end of the result list
+            errors += 1
+            exc_msg = f"HTTP {exc.code}"
+        except Exception as exc:  # timeouts, connection resets, DNS
+            errors += 1
+            exc_msg = str(exc)
+        if errors >= MAX_ERROR_ATTEMPTS:
+            print(f"  {exc_msg} x{errors} - giving up on this page for now.", flush=True)
+            return None
+        wait = 5 * errors * random.uniform(0.8, 1.3)
+        print(f"  {exc_msg}; retrying in {wait:.0f}s", flush=True)
+        _sleep(wait)
 
 
 def classify_role_domain(title: str) -> str:
@@ -50,15 +130,20 @@ def classify_role_domain(title: str) -> str:
     return "Other"
 
 
-def scrape_jobs_for_keyword(keyword: str, geoid: str = "103644278", f_tpr: str = "r86400", f_wt: str = "2", f_e: str = "4", seen_ids: set = None):
+def scrape_jobs_for_keyword(keyword: str, geoid: str = "103644278", f_tpr: str = "r86400", f_wt: str = "2", f_e: str = "4",
+                            seen_ids: set = None, start_offset: int = 0, return_failed_offset: bool = False):
+    """Scrape one keyword. With return_failed_offset=True returns (jobs, offset_or_None), where the
+    offset is the page that could not be fetched (so the keyword can be resumed later)."""
     if seen_ids is None:
         seen_ids = set()
 
     base_api = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
     jobs = []
-    start = 0
+    start = start_offset
+    failed_offset = None
 
-    print(f"\n--- Scraping jobs for keyword='{keyword}' (US, Remote, 24h, 5+ YOE [f_E={f_e}]) ---", flush=True)
+    resumed = f", resuming at offset {start_offset}" if start_offset else ""
+    print(f"\n--- Scraping jobs for keyword='{keyword}' (US, Remote, 24h, 5+ YOE [f_E={f_e}]){resumed} ---", flush=True)
 
     consecutive_empty = 0
     while start < 1000:
@@ -74,27 +159,11 @@ def scrape_jobs_for_keyword(keyword: str, geoid: str = "103644278", f_tpr: str =
         query = urllib.parse.urlencode(query_params)
         api_url = f"{base_api}?{query}"
         ua = USER_AGENTS[(start // 10) % len(USER_AGENTS)]
-        req = urllib.request.Request(api_url, headers={
-            "User-Agent": ua,
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        })
 
-        html = None
-        for attempt in range(4):
-            try:
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    html = resp.read().decode("utf-8")
-                break
-            except Exception as exc:
-                wait_sec = 2 * (attempt + 1)
-                print(f"Attempt {attempt+1} failed at offset {start}: {exc}. Waiting {wait_sec}s...")
-                time.sleep(wait_sec)
-
-        if not html:
-            global FETCH_FAILURES
-            FETCH_FAILURES += 1
-            print(f"Could not fetch offset {start} after retries. Stopping keyword.")
+        html = fetch_page(api_url, ua)
+        if html is None:
+            failed_offset = start
+            print(f"Could not fetch offset {start}; keyword will be resumed from here in a later pass.", flush=True)
             break
 
         soup = BeautifulSoup(html, "html.parser")
@@ -105,7 +174,7 @@ def scrape_jobs_for_keyword(keyword: str, geoid: str = "103644278", f_tpr: str =
                 print("End of search results reached for keyword.")
                 break
             start += 10
-            time.sleep(1)
+            _sleep(_pace)
             continue
 
         consecutive_empty = 0
@@ -188,8 +257,13 @@ def scrape_jobs_for_keyword(keyword: str, geoid: str = "103644278", f_tpr: str =
         if len(cards) < 10:
             print("Reached last page.")
             break
-        time.sleep(1.2)
+        _sleep(_pace * random.uniform(0.8, 1.3))
 
+    if return_failed_offset:
+        return jobs, failed_offset
+    if failed_offset is not None:
+        global FETCH_FAILURES
+        FETCH_FAILURES += 1
     return jobs
 
 DEFAULT_KEYWORDS = [
@@ -224,17 +298,50 @@ def scrape_all_jobs(keywords_list: list = None, out_path: str = "all_scraped_job
     if keywords_list is None:
         keywords_list = DEFAULT_KEYWORDS
 
+    global FETCH_FAILURES, INCOMPLETE
     all_jobs = []
     seen_ids = set()
-    for i, kw in enumerate(keywords_list, 1):
-        kw_jobs = scrape_jobs_for_keyword(keyword=kw, seen_ids=seen_ids)
+
+    def run(kw, offset):
+        kw_jobs, failed = scrape_jobs_for_keyword(keyword=kw, seen_ids=seen_ids, start_offset=offset,
+                                                  return_failed_offset=True)
         all_jobs.extend(kw_jobs)
         # Only checkpoint once something was collected, so a blocked run never
         # replaces an earlier good file with an empty one.
         if all_jobs:
             save_all_scraped(all_jobs, out_path)
+        return failed
+
+    pending = []  # (keyword, offset) still to finish
+    for i, kw in enumerate(keywords_list, 1):
+        failed = run(kw, 0)
+        if failed is not None:
+            pending.append((kw, failed))
         print(f"[{i}/{len(keywords_list)}] Total collected so far: {len(all_jobs)} jobs (saved to {out_path})", flush=True)
-        time.sleep(1.5)
+        _sleep(_pace)
+
+    # Resume passes: after a cool-down, continue each throttled keyword from the page it stopped at.
+    for p in range(1, RESUME_PASSES + 1):
+        if not pending:
+            break
+        cooldown = RESUME_COOLDOWN * p
+        print(f"\n=== Resume pass {p}/{RESUME_PASSES}: {len(pending)} keyword(s) left; cooling down {cooldown:.0f}s ===",
+              flush=True)
+        _sleep(cooldown)
+        still = []
+        for kw, offset in pending:
+            failed = run(kw, offset)
+            if failed is not None:
+                still.append((kw, failed))
+            print(f"[resume {p}] '{kw}' -> total {len(all_jobs)} jobs", flush=True)
+        pending = still
+
+    INCOMPLETE = [{"keyword": kw, "offset": off} for kw, off in pending]
+    FETCH_FAILURES = len(pending)
+    if pending:
+        print(f"WARNING: {len(pending)} keyword(s) still incomplete after {RESUME_PASSES} resume passes: "
+              + ", ".join(f"{kw}@{off}" for kw, off in pending), flush=True)
+    print(f"[scrape] HTTP 429 responses seen: {THROTTLE_HITS}", flush=True)
 
     if not all_jobs and not FETCH_FAILURES:
         # Genuinely no matching jobs today: write a header-only file for downstream steps.

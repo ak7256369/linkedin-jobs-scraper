@@ -8,6 +8,7 @@ venv/
 # Generated data (uploaded as GitHub Actions artifacts, not committed)
 *.csv
 external_apply_urls.json
+shards/
 
 # Secrets / local config never belong in git
 .env

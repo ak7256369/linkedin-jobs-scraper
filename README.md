@@ -11,6 +11,13 @@ Workflow: [`.github/workflows/daily-scrape.yml`](.github/workflows/daily-scrape.
 - **Schedule:** `0 19 * * 0-5` UTC = **12:00 AM Pakistan time, Monday–Saturday** (no run at Sunday midnight).
   GitHub may start scheduled runs a few minutes late.
 - **Manual run:** Actions → *Daily 24h LinkedIn external links* → *Run workflow*, with optional `dry_run`.
+- **Jobs:** `test` → `scrape` (4 parallel shards) → `finish` (merge, filter, resolve, POST).
+- **Rate limits:** LinkedIn throttles bursts per IP with HTTP 429. The scraper handles it three ways:
+  - the keywords are split over 4 matrix jobs, each on its own runner VM and IP;
+  - on 429 it honours `Retry-After` or backs off 20 → 40 → 80 → 160 s and slows its page pace;
+  - a page that still fails is resumed from that offset in up to 3 later passes (2, 4, 6 min cool-downs)
+    instead of being dropped.
+  Keywords still incomplete after that are listed as a warning and in `data/last_run.json`.
 - **Pipeline:** [`daily_pipeline.py`](daily_pipeline.py)
   1. `scrape_all.py` – LinkedIn public guest search (no login), 24h, remote, US, senior.
   2. `linkedin_ai_job_filter.py` – strict filter (blacklist, Director/VP, seniority, AI/software domain, age...).
@@ -39,6 +46,8 @@ POST body: `{"tab_name": "19 Nov", "header": "external_apply_url", "urls": [...]
 pip install -r requirements.txt
 python daily_pipeline.py --skip-post          # full pipeline, no website call
 python daily_pipeline.py --keywords "senior ai remote" --skip-post
+python daily_pipeline.py --scrape-only shards --shard 0 --shards 4   # what each CI shard runs
+python daily_pipeline.py --merge shards --skip-post                  # what the finish job runs
 python -m unittest discover tests
 ```
 

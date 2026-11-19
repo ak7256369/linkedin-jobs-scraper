@@ -21,6 +21,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -70,9 +71,51 @@ def dedupe_keep_order(urls: list[str]) -> list[str]:
     return out
 
 
-def step_scrape(keywords: list[str] | None) -> list[dict]:
-    jobs = scrape_all.scrape_all_jobs(keywords or scrape_all.DEFAULT_KEYWORDS, out_path=str(SCRAPED_CSV))
-    print(f"[scrape] {len(jobs)} unique jobs, {scrape_all.FETCH_FAILURES} page fetch failure(s)", flush=True)
+def shard_keywords(keywords: list[str], shard: int, shards: int) -> list[str]:
+    """Round-robin split so every shard (one GitHub runner = one IP) gets a similar load."""
+    if shards < 1 or not 0 <= shard < shards:
+        raise ValueError(f"invalid shard {shard}/{shards}")
+    return keywords[shard::shards]
+
+
+def job_key(row: dict) -> str:
+    url = (row.get("linkedin_job_url") or "").split("?")[0].rstrip("/")
+    m = re.search(r"(\d{6,})$", url)
+    return m.group(1) if m else url.lower()
+
+
+def merge_shards(shard_dir: Path) -> tuple[list[dict], dict]:
+    """Merge scraped_*.csv / scraped_*.json written by --scrape-only shards (deduped, order kept)."""
+    jobs, seen = [], set()
+    meta = {"shards": 0, "incomplete": [], "throttle_hits": 0, "fetch_failures": 0}
+    for csv_path in sorted(shard_dir.rglob("scraped_*.csv")):
+        meta["shards"] += 1
+        for row in read_csv(csv_path):
+            k = job_key(row)
+            if k and k not in seen:
+                seen.add(k)
+                jobs.append(row)
+        meta_path = csv_path.with_suffix(".json")
+        if meta_path.exists():
+            m = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta["incomplete"] += m.get("incomplete", [])
+            meta["throttle_hits"] += m.get("throttle_hits", 0)
+            meta["fetch_failures"] += m.get("fetch_failures", 0)
+    return jobs, meta
+
+
+def scrape_meta() -> dict:
+    return {
+        "incomplete": scrape_all.INCOMPLETE,
+        "throttle_hits": scrape_all.THROTTLE_HITS,
+        "fetch_failures": scrape_all.FETCH_FAILURES,
+    }
+
+
+def step_scrape(keywords: list[str] | None, out_path: Path = SCRAPED_CSV) -> list[dict]:
+    jobs = scrape_all.scrape_all_jobs(keywords or scrape_all.DEFAULT_KEYWORDS, out_path=str(out_path))
+    print(f"[scrape] {len(jobs)} unique jobs, {scrape_all.FETCH_FAILURES} keyword(s) incomplete, "
+          f"{scrape_all.THROTTLE_HITS} HTTP 429 response(s)", flush=True)
     if not jobs and scrape_all.FETCH_FAILURES:
         raise SystemExit("[scrape] ERROR: 0 jobs and LinkedIn page fetches failed - runner IP is probably blocked/limited.")
     return jobs
@@ -158,7 +201,27 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dry-run", action="store_true", help="send dry_run=true to the ingest endpoint")
     ap.add_argument("--skip-post", action="store_true", help="do not contact the ingest endpoint at all")
     ap.add_argument("--keywords", nargs="+", help="override the default LinkedIn search keywords")
+    ap.add_argument("--shard", type=int, default=0, help="this shard's index (0-based) with --shards")
+    ap.add_argument("--shards", type=int, default=1, help="split keywords round-robin over N shards")
+    ap.add_argument("--scrape-only", metavar="DIR",
+                    help="only scrape this shard's keywords into DIR/scraped_<shard>.csv (+ .json) and exit")
+    ap.add_argument("--merge", metavar="DIR",
+                    help="skip scraping; merge DIR/**/scraped_*.csv from shards, then filter/resolve/POST")
     args = ap.parse_args(argv)
+
+    keywords = shard_keywords(args.keywords or scrape_all.DEFAULT_KEYWORDS, args.shard, args.shards)
+
+    if args.scrape_only:
+        out_dir = Path(args.scrape_only)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_csv = out_dir / f"scraped_{args.shard}.csv"
+        print(f"[shard {args.shard + 1}/{args.shards}] keywords: {keywords}", flush=True)
+        jobs = step_scrape(keywords, out_csv)
+        if not out_csv.exists():
+            scrape_all.save_all_scraped(jobs, str(out_csv))
+        meta = {"shard": args.shard, "keywords": keywords, "scraped": len(jobs), **scrape_meta()}
+        out_csv.with_suffix(".json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+        return 0
 
     started = datetime.now(KARACHI)
     tab_name = tab_name_for(started)
@@ -172,8 +235,22 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Run date (Asia/Karachi): {started:%Y-%m-%d %H:%M} -> tab_name '{tab_name}'", flush=True)
 
     try:
-        jobs = step_scrape(args.keywords)
+        if args.merge:
+            jobs, meta = merge_shards(Path(args.merge))
+            print(f"[merge] {meta['shards']} shard(s) -> {len(jobs)} unique jobs", flush=True)
+            if meta["shards"] == 0:
+                raise SystemExit(f"[merge] ERROR: no scraped_*.csv found under {args.merge}")
+            if not jobs and meta["fetch_failures"]:
+                raise SystemExit("[merge] ERROR: 0 jobs and LinkedIn page fetches failed on the shards.")
+            scrape_all.save_all_scraped(jobs, str(SCRAPED_CSV))
+        else:
+            jobs = step_scrape(keywords)
+            meta = scrape_meta()
         summary["scraped"] = len(jobs)
+        summary.update(throttle_hits=meta["throttle_hits"], incomplete_keywords=meta["incomplete"])
+        if meta["incomplete"]:
+            msg = f"{len(meta['incomplete'])} keyword(s) incomplete after resume passes: {meta['incomplete']}"
+            print(f"::warning::{msg}" if os.environ.get("GITHUB_ACTIONS") else f"WARNING: {msg}", flush=True)
         passed, rejected = step_filter(jobs)
         summary.update(filter_pass=passed, filter_reject=rejected)
         step_resolve(passed)
