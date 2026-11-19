@@ -1,0 +1,14 @@
+{
+  "started_at_pkt": "2026-11-19T19:13:54+05:00",
+  "tab_name": "19 Nov",
+  "source_run": "44541432154",
+  "dry_run": true,
+  "status": "ok",
+  "scraped": 1372,
+  "filter_pass": 1372,
+  "filter_reject": 0,
+  "resolved": 386,
+  "external_urls": 152,
+  "post": "skipped (secrets not set)",
+  "finished_at_pkt": "2026-11-19T19:48:37+05:00"
+}
