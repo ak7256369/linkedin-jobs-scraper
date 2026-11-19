@@ -1,0 +1,76 @@
+name: Daily 24h LinkedIn external links
+
+on:
+  schedule:
+    # 19:00 UTC Sun-Fri = 12:00 AM Asia/Karachi (UTC+5, no DST) Mon-Sat. No run at Sunday midnight.
+    - cron: "0 19 * * 0-5"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Send dry_run=true to the website (no rows written there)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # commit data/last_run.json (keepalive so the schedule is never auto-disabled)
+
+concurrency:
+  group: daily-scrape
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Unit tests
+        run: python -m unittest discover tests
+
+      - name: Run pipeline (scrape -> filter -> resolve -> POST)
+        env:
+          TRUESOFTS_INGEST_URL: ${{ secrets.TRUESOFTS_INGEST_URL }}
+          TRUESOFTS_INGEST_TOKEN: ${{ secrets.TRUESOFTS_INGEST_TOKEN }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            python -u daily_pipeline.py --dry-run
+          else
+            python -u daily_pipeline.py
+          fi
+
+      - name: Upload CSVs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linkedin-jobs-${{ github.run_id }}
+          path: |
+            *.csv
+            external_apply_urls.json
+            data/last_run.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Commit keepalive (data/last_run.json)
+        if: always()
+        run: |
+          [ -f data/last_run.json ] || { echo "no last_run.json"; exit 0; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/last_run.json
+          if git diff --cached --quiet; then
+            echo "No change to commit"
+          else
+            git commit -m "chore: daily run ${{ github.run_id }} [skip ci]"
+            git pull --rebase --autostash
+            git push
+          fi

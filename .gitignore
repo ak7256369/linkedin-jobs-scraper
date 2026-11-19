@@ -1,0 +1,15 @@
+# Python caches
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Generated data (uploaded as GitHub Actions artifacts, not committed)
+*.csv
+external_apply_urls.json
+
+# Secrets / local config never belong in git
+.env
+*.env
+cookies*.txt
