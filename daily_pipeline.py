@@ -26,7 +26,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -47,10 +47,18 @@ KARACHI = ZoneInfo("Asia/Karachi")
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
+EVENING_ROLLOVER_HOURS = 6  # runs from 6:00 PM PKT onward belong to the next day's tab
+
+
 def tab_name_for(now: datetime | None = None) -> str:
-    """Run date in Asia/Karachi as 'DD Mon' (e.g. '03 Nov'), independent of locale and runner clock zone."""
+    """Tab day in Asia/Karachi as 'DD Mon' (e.g. '03 Nov'), independent of locale and runner clock zone.
+
+    The scheduled run starts around 9 PM so links are ready by midnight; anything from 6:00 PM PKT
+    on is named for the next day, which is the day it replaces the old 12:00 AM run for.
+    """
     local = (now or datetime.now(KARACHI)).astimezone(KARACHI)
-    return f"{local.day:02d} {MONTHS[local.month - 1]}"
+    day = local + timedelta(hours=EVENING_ROLLOVER_HOURS)
+    return f"{day.day:02d} {MONTHS[day.month - 1]}"
 
 
 def read_csv(path: Path) -> list[dict]:

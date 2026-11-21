@@ -2,14 +2,15 @@ name: Daily 24h LinkedIn external links
 
 on:
   schedule:
-    # 19:00 UTC Sun-Fri = 12:00 AM Asia/Karachi (UTC+5, no DST) Mon-Sat. No run at Sunday midnight.
-    # GitHub often starts scheduled runs hours late or drops them, so backup triggers follow;
-    # the "gate" job lets only the first one each Karachi day do the work.
-    - cron: "0 19 * * 0-5"
-    - cron: "17 19 * * 0-5"
-    - cron: "41 19 * * 0-5"
-    - cron: "13 20 * * 0-5"
-    - cron: "47 20 * * 0-5"
+    # Starts ~9 PM Asia/Karachi (UTC+5, no DST) Sun-Fri, so the links are in the sheet by
+    # 12:00 AM Mon-Sat. 16:07 UTC = 9:07 PM PKT. Off the top of the hour, where GitHub delays least.
+    # GitHub can still start scheduled runs late or drop them, so backup triggers follow until
+    # 10:43 PM PKT; the "gate" job lets only the first one per run window do the work.
+    - cron: "7 16 * * 0-5"
+    - cron: "29 16 * * 0-5"
+    - cron: "53 16 * * 0-5"
+    - cron: "19 17 * * 0-5"
+    - cron: "43 17 * * 0-5"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -29,7 +30,7 @@ env:
   SHARDS: 4
 
 jobs:
-  # Scheduled runs: continue only if no earlier scheduled run of this Karachi day is running
+  # Scheduled runs: continue only if no earlier scheduled run of this run window is running
   # or succeeded (a failed or cancelled one lets the next backup trigger retry).
   gate:
     runs-on: ubuntu-latest
@@ -43,12 +44,15 @@ jobs:
           if [ "${{ github.event_name }}" != "schedule" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          since=$(date -u -d "$(TZ=Asia/Karachi date +%F) 00:00 +0500" +%Y-%m-%dT%H:%M:%SZ)
+          # Run window = 6:00 PM PKT the evening before the tab's day until 6:00 PM PKT on it
+          # (same rule as tab_name_for in daily_pipeline.py).
+          target=$(TZ=Asia/Karachi date -d '+6 hours' +%F)
+          since=$(date -u -d "$target 00:00 +0500 - 6 hours" +%Y-%m-%dT%H:%M:%SZ)
           earlier=$(gh run list -R "$GITHUB_REPOSITORY" -w daily-scrape.yml -e schedule -L 30 \
             --json databaseId,createdAt,status,conclusion \
             --jq "[.[] | select(.databaseId != ${{ github.run_id }}) | select(.createdAt >= \"$since\")
                    | select(.conclusion != \"failure\" and .conclusion != \"cancelled\" and .conclusion != \"timed_out\")] | length")
-          echo "Karachi day starts $since UTC; earlier scheduled runs today: $earlier"
+          echo "Run window for tab $target starts $since UTC; earlier scheduled runs in it: $earlier"
           if [ "$earlier" = "0" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; else echo "run=false" >> "$GITHUB_OUTPUT"; fi
 
   test:

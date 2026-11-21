@@ -57,6 +57,18 @@ class PipelineHelperTests(unittest.TestCase):
         self.assertEqual(daily_pipeline.tab_name_for(datetime(2026, 11, 18, 19, 30, tzinfo=timezone.utc)), "19 Nov")
         self.assertEqual(daily_pipeline.tab_name_for(datetime(2026, 3, 2, 21, 0, tzinfo=timezone.utc)), "03 Mar")
 
+    def test_tab_name_evening_runs_belong_to_next_day(self):
+        utc = timezone.utc
+        # 9:07 PM PKT Sun 22 Nov -> Monday's tab
+        self.assertEqual(daily_pipeline.tab_name_for(datetime(2026, 11, 22, 16, 7, tzinfo=utc)), "23 Nov")
+        # 10:43 PM PKT backup trigger on 31 Dec -> new year
+        self.assertEqual(daily_pipeline.tab_name_for(datetime(2026, 12, 31, 17, 43, tzinfo=utc)), "01 Jan")
+        # Run delayed past midnight keeps the same tab
+        self.assertEqual(daily_pipeline.tab_name_for(datetime(2026, 11, 22, 21, 30, tzinfo=utc)), "23 Nov")
+        # 5:59 PM PKT stays on the same day; 6:00 PM rolls over
+        self.assertEqual(daily_pipeline.tab_name_for(datetime(2026, 11, 22, 12, 59, tzinfo=utc)), "22 Nov")
+        self.assertEqual(daily_pipeline.tab_name_for(datetime(2026, 11, 22, 13, 0, tzinfo=utc)), "23 Nov")
+
     def test_dedupe_keeps_first_occurrence_order(self):
         urls = ["https://a.com/1", "https://b.com/2/", "https://A.com/1", "https://b.com/2", "", "https://c.com/3"]
         self.assertEqual(
