@@ -160,7 +160,32 @@ def collect_urls() -> list[str]:
     return dedupe_keep_order([r.get("external_apply_url", "") for r in rows if r.get("filter_status", "PASS") == "PASS"])
 
 
+SPLIT_BLANK_ROWS = int(os.environ.get("SPLIT_BLANK_ROWS", "3"))
+
+
+def split_for_bidders(urls: list[str], blanks: int = SPLIT_BLANK_ROWS) -> list[str]:
+    """Two bidders share the links: put `blanks` empty rows between the first half and the second."""
+    if blanks <= 0 or len(urls) < 2:
+        return list(urls)
+    mid = (len(urls) + 1) // 2
+    return urls[:mid] + [""] * blanks + urls[mid:]
+
+
 def post_urls(payload: dict) -> dict | None:
+    """POST to the ingest endpoint. If it does not accept blank rows yet, retry once without them."""
+    try:
+        return _post(payload)
+    except _BlankRowsRejected:
+        msg = "ingest endpoint rejected blank rows - posted the links without the bidder split gap."
+        print(f"::warning::{msg}" if os.environ.get("GITHUB_ACTIONS") else f"WARNING: {msg}", flush=True)
+        return _post({**payload, "urls": [u for u in payload["urls"] if u]})
+
+
+class _BlankRowsRejected(Exception):
+    pass
+
+
+def _post(payload: dict) -> dict | None:
     url = os.environ.get("TRUESOFTS_INGEST_URL", "").strip()
     token = os.environ.get("TRUESOFTS_INGEST_TOKEN", "").strip()
     if not url or not token:
@@ -185,6 +210,8 @@ def post_urls(payload: dict) -> dict | None:
             body = resp.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", "replace")[:1000]
+        if exc.code == 400 and "" in payload.get("urls", []) and "not an http" in body:
+            raise _BlankRowsRejected(body)
         raise SystemExit(f"[post] ERROR: ingest endpoint returned HTTP {exc.code}: {body}")
     except urllib.error.URLError as exc:
         raise SystemExit(f"[post] ERROR: could not reach ingest endpoint: {exc.reason}")
@@ -271,7 +298,7 @@ def main(argv: list[str] | None = None) -> int:
         payload = {
             "tab_name": tab_name,
             "header": "external_apply_url",
-            "urls": urls,
+            "urls": split_for_bidders(urls),  # "" = blank row (gap between the two bidders' halves)
             "dry_run": args.dry_run,
             "source_run": summary["source_run"],
         }
