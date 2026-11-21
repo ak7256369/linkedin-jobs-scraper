@@ -1,22 +1,22 @@
 {
-  "started_at_pkt": "2026-11-21T01:49:47+05:00",
+  "started_at_pkt": "2026-11-21T08:11:00+05:00",
   "tab_name": "21 Nov",
-  "source_run": "44791512483",
+  "source_run": "44843486932",
   "dry_run": false,
   "status": "ok",
-  "scraped": 1910,
-  "throttle_hits": 443,
+  "scraped": 1874,
+  "throttle_hits": 598,
   "incomplete_keywords": [],
-  "filter_pass": 1910,
+  "filter_pass": 1874,
   "filter_reject": 0,
-  "resolved": 501,
-  "external_urls": 196,
+  "resolved": 490,
+  "external_urls": 198,
   "post": {
     "tab_id": "142c1c14-b7e8-4627-b28e-06b0a81a0fe0",
     "created": false,
-    "inserted": 196,
+    "inserted": 45,
     "tab_name": "21 Nov",
-    "skipped_duplicates": 0
+    "skipped_duplicates": 153
   },
-  "finished_at_pkt": "2026-11-21T01:58:37+05:00"
+  "finished_at_pkt": "2026-11-21T08:18:53+05:00"
 }
