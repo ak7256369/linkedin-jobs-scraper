@@ -3,7 +3,13 @@ name: Daily 24h LinkedIn external links
 on:
   schedule:
     # 19:00 UTC Sun-Fri = 12:00 AM Asia/Karachi (UTC+5, no DST) Mon-Sat. No run at Sunday midnight.
+    # GitHub often starts scheduled runs hours late or drops them, so backup triggers follow;
+    # the "gate" job lets only the first one each Karachi day do the work.
     - cron: "0 19 * * 0-5"
+    - cron: "17 19 * * 0-5"
+    - cron: "41 19 * * 0-5"
+    - cron: "13 20 * * 0-5"
+    - cron: "47 20 * * 0-5"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -13,6 +19,7 @@ on:
 
 permissions:
   contents: write   # commit data/last_run.json (keepalive so the schedule is never auto-disabled)
+  actions: read     # gate job lists today's earlier runs
 
 concurrency:
   group: daily-scrape
@@ -22,7 +29,31 @@ env:
   SHARDS: 4
 
 jobs:
+  # Scheduled runs: continue only if no earlier scheduled run of this Karachi day is running
+  # or succeeded (a failed or cancelled one lets the next backup trigger retry).
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.g.outputs.run }}
+    steps:
+      - id: g
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          since=$(date -u -d "$(TZ=Asia/Karachi date +%F) 00:00 +0500" +%Y-%m-%dT%H:%M:%SZ)
+          earlier=$(gh run list -R "$GITHUB_REPOSITORY" -w daily-scrape.yml -e schedule -L 30 \
+            --json databaseId,createdAt,status,conclusion \
+            --jq "[.[] | select(.databaseId != ${{ github.run_id }}) | select(.createdAt >= \"$since\")
+                   | select(.conclusion != \"failure\" and .conclusion != \"cancelled\" and .conclusion != \"timed_out\")] | length")
+          echo "Karachi day starts $since UTC; earlier scheduled runs today: $earlier"
+          if [ "$earlier" = "0" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; else echo "run=false" >> "$GITHUB_OUTPUT"; fi
+
   test:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
