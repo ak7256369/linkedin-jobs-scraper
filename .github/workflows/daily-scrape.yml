@@ -2,15 +2,15 @@ name: Daily 24h LinkedIn external links
 
 on:
   schedule:
-    # Starts ~9 PM Asia/Karachi (UTC+5, no DST) Sun-Fri, so the links are in the sheet by
-    # 12:00 AM Mon-Sat. 16:07 UTC = 9:07 PM PKT. Off the top of the hour, where GitHub delays least.
-    # GitHub can still start scheduled runs late or drop them, so backup triggers follow until
-    # 10:43 PM PKT; the "gate" job lets only the first one per run window do the work.
-    - cron: "7 16 * * 0-5"
-    - cron: "29 16 * * 0-5"
-    - cron: "53 16 * * 0-5"
-    - cron: "19 17 * * 0-5"
-    - cron: "43 17 * * 0-5"
+    # The daily run is started at 12:00 AM Asia/Karachi (UTC+5, no DST) Mon-Sat by an external
+    # timer (cron-job.org -> workflow_dispatch API), because GitHub starts scheduled runs hours late.
+    # These schedules are only backups in case the timer fails (19:00 UTC = 12:00 AM PKT);
+    # the "gate" job skips them when a run for the same tab already ran or is running.
+    - cron: "5 19 * * 0-5"
+    - cron: "35 19 * * 0-5"
+    - cron: "15 20 * * 0-5"
+    - cron: "15 21 * * 0-5"
+    - cron: "15 23 * * 0-5"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -30,8 +30,9 @@ env:
   SHARDS: 4
 
 jobs:
-  # Scheduled runs: continue only if no earlier scheduled run of this run window is running
-  # or succeeded (a failed or cancelled one lets the next backup trigger retry).
+  # Manual / timer (workflow_dispatch) runs always continue. Scheduled backups continue only if no
+  # earlier scheduled or dispatched run of this run window is running or succeeded (a failed or
+  # cancelled one lets the next backup trigger retry).
   gate:
     runs-on: ubuntu-latest
     outputs:
@@ -48,11 +49,12 @@ jobs:
           # (same rule as tab_name_for in daily_pipeline.py).
           target=$(TZ=Asia/Karachi date -d '+6 hours' +%F)
           since=$(date -u -d "$target 00:00 +0500 - 6 hours" +%Y-%m-%dT%H:%M:%SZ)
-          earlier=$(gh run list -R "$GITHUB_REPOSITORY" -w daily-scrape.yml -e schedule -L 30 \
-            --json databaseId,createdAt,status,conclusion \
+          earlier=$(gh run list -R "$GITHUB_REPOSITORY" -w daily-scrape.yml -L 40 \
+            --json databaseId,event,createdAt,status,conclusion \
             --jq "[.[] | select(.databaseId != ${{ github.run_id }}) | select(.createdAt >= \"$since\")
+                   | select(.event == \"schedule\" or .event == \"workflow_dispatch\")
                    | select(.conclusion != \"failure\" and .conclusion != \"cancelled\" and .conclusion != \"timed_out\")] | length")
-          echo "Run window for tab $target starts $since UTC; earlier scheduled runs in it: $earlier"
+          echo "Run window for tab $target starts $since UTC; earlier runs in it: $earlier"
           if [ "$earlier" = "0" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; else echo "run=false" >> "$GITHUB_OUTPUT"; fi
 
   test:

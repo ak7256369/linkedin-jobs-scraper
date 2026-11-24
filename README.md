@@ -8,7 +8,7 @@ sites, ...), cross-verifies every filter on that page, and sends the verified li
 
 Workflow: [`.github/workflows/daily-scrape.yml`](.github/workflows/daily-scrape.yml)
 
-- **Schedule:** `0 19 * * 0-5` UTC = **12:00 AM Pakistan time, Monday–Saturday** (no run at Sunday midnight).
+- **Schedule:** **12:00 AM Pakistan time, Monday–Saturday**, started by an external timer (cron-job.org calls the `workflow_dispatch` API with a fine-grained token that has Actions read/write on this repo only), because GitHub starts scheduled runs hours late. The workflow's own `schedule` triggers (19:05–23:15 UTC) are backups; the gate job skips them when that day's run already ran.
   GitHub may start scheduled runs a few minutes late.
 - **Manual run:** Actions → *Daily 24h LinkedIn external links* → *Run workflow*, with optional `dry_run`.
 - **Jobs:** `test` → `scrape` (4 parallel shards) → `finish` (merge, filter, resolve, POST).
