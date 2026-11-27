@@ -410,7 +410,7 @@ class FilterTests(unittest.TestCase):
         allowed_cases = [
             ("Google", "Senior AI Engineer - ChatGPT Integration", "https://careers.google.com/1"),
             ("Microsoft", "Principal Applied Scientist", "https://careers.microsoft.com/2"),
-            ("NVIDIA", "Senior Research Scientist, Deep Learning", "https://nvidia.com/3"),
+            ("Meta", "Senior Research Scientist, Deep Learning", "https://www.metacareers.com/3"),
             ("Databricks", "Staff Machine Learning Engineer", "https://databricks.com/4"),
             ("Anthropic", "Senior Staff AI Engineer", "https://jobs.lever.co/anthropic/5"),
         ]

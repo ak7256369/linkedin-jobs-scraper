@@ -16,7 +16,7 @@ AGGREGATOR_DOMAINS = {
 BLACKLISTED_COMPANIES = {
     'clickup', 'jobright.ai', 'jobright', 'alignerr', 'ladders', 'rex.zone',
     'jobtogether', 'dayforce', 'micro1', 'data annotation', 'dataannotation',
-    'turing', 'chatgpt jobs', 'synthesia'
+    'turing', 'chatgpt jobs', 'synthesia', 'nvidia'
 }
 
 DISALLOWED_TITLES = re.compile(r'\b(director|vp|vice\s*president|vice)\b', re.IGNORECASE)

@@ -4,7 +4,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from linkedin_ai_job_filter import DIRECTOR_VP_RE, check_record, non_engineering_reason, url_slug_text
+from linkedin_ai_job_filter import (DIRECTOR_VP_RE, check_record, is_blacklisted_company,
+                                    non_engineering_reason, url_slug_text)
 
 
 class NonEngineeringTests(unittest.TestCase):
@@ -80,6 +81,18 @@ class DirectorVpSlugTests(unittest.TestCase):
             "posted_minutes_ago": "60",
         }
         self.assertTrue(any("Director / VP" in r for r in check_record(row)))
+
+
+class NvidiaBlacklistTests(unittest.TestCase):
+    def test_nvidia_blocked(self):
+        self.assertTrue(is_blacklisted_company(company="NVIDIA")[0])
+        self.assertTrue(is_blacklisted_company(company="Nvidia Corporation")[0])
+        self.assertTrue(is_blacklisted_company(url="https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite/job/US-CA-Santa-Clara/Senior-Software-Engineer_JR2028821")[0])
+
+    def test_nvidia_mention_elsewhere_not_blocked(self):
+        self.assertFalse(is_blacklisted_company(
+            company="Acme", title="Senior ML Engineer (NVIDIA GPUs, CUDA)",
+            url="https://jobs.ashbyhq.com/acme/123")[0])
 
 
 if __name__ == "__main__":

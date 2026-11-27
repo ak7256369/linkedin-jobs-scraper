@@ -231,6 +231,11 @@ BLACKLISTED_COMPANIES: List[Dict[str, object]] = [
         "domains": ["dataannotation.tech", "dataannotation.com", "dataannotation"],
     },
     {
+        "name": "NVIDIA",
+        "patterns": [r"\bnvidia\b"],
+        "domains": ["nvidia.com", "nvidia.wd1.", "nvidia.wd5.", "nvidia.eightfold.ai"],
+    },
+    {
         "name": "Turing",
         "patterns": [r"\bturing\b"],
         "domains": ["turing.com"],
